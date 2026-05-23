@@ -1,0 +1,91 @@
+import os
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from datetime import datetime
+
+# 1. Aesthetic Formatting Style Parameters
+font_row1 = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+fill_row1 = PatternFill(start_color="2B4C7E", end_color="2B4C7E", fill_type="solid")
+
+font_row2 = Font(name="Segoe UI", size=10, bold=True, color="000000")
+fill_row2 = PatternFill(start_color="E1EBF5", end_color="E1EBF5", fill_type="solid")
+
+align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+thin_border = Border(
+    left=Side(style="thin", color="CCCCCC"),
+    right=Side(style="thin", color="CCCCCC"),
+    top=Side(style="thin", color="CCCCCC"),
+    bottom=Side(style="thin", color="CCCCCC")
+)
+
+# 2. Reusable Workbook Structural Constructor 
+def build_excel_file(structure, filename):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Template"
+    ws.views.sheetView[0].showGridLines = True
+    
+    current_col = 1
+    for r1_text, r2_texts in structure:
+        start_col = current_col
+        end_col = current_col + len(r2_texts) - 1
+        
+        # Apply tier-1 headers & merge cells
+        ws.cell(row=1, column=start_col, value=r1_text)
+        if end_col > start_col:
+            ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
+            
+        # Place tier-2 child rows
+        for idx, r2_text in enumerate(r2_texts):
+            ws.cell(row=2, column=start_col + idx, value=r2_text)
+            
+        current_col = end_col + 1
+        
+    # Styling pass across all columns
+    total_cols = current_col - 1
+    for col in range(1, total_cols + 1):
+        c1 = ws.cell(row=1, column=col)
+        c1.font = font_row1; c1.fill = fill_row1; c1.alignment = align_center; c1.border = thin_border
+        
+        c2 = ws.cell(row=2, column=col)
+        c2.font = font_row2; c2.fill = fill_row2; c2.alignment = align_center; c2.border = thin_border
+
+    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[2].height = 24
+    ws.freeze_panes = "A3"
+    
+    # Auto-fit spacing
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
+        
+    wb.save(filename)
+
+# 3. Clean Baseline Structure Definition
+def get_base_structure():
+    return [
+        ["Breach Tracking", ["Breach ID", "Document ID", "Custodian", "File extension", "File Name"]],
+        ["Category", ["Category"]],
+        ["Individual Information", ["Full Name", "First name", "Middle Name", "Last Name", "Suffix"]],
+        ["Identification information", ["SSN", "DOB"]]
+    ]
+
+# 4. Generate the 10 Loop Configurations
+time_str = datetime.now().strftime("%H%M")
+
+for i in range(1, 11):
+    struct = get_base_structure()
+    
+    # Inject variations based on structural requirements
+    if i in [2, 6]:
+        struct[2][1].insert(2, "Middle Initial")  # Added Column Scenario
+    elif i in [3, 7]:
+        struct[0][1].remove("Custodian")          # Missing Column Scenario
+    elif i in [4, 8]:
+        struct[3][1] = ["SNN", "DOB"]             # Spelling/Typo Column Scenario
+    # Files 1, 5, 9, 10 remain clean control baselines
+        
+    filename = f"20260523_{time_str}_Project Test_KSTL_{i}.xlsx"
+    build_excel_file(struct, filename)
+    print(f"Generated File: {filename}")

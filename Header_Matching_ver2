@@ -1,0 +1,165 @@
+import os
+import openpyxl
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+def get_header_structure(filepath):
+    """
+    Extracts a nested list structure representing Row 1 and Row 2 headers.
+    Returns: [ (Row1_Group_Name, [Row2_Subheaders...]), ... ]
+    """
+    try:
+        wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+        ws = wb.active
+        
+        max_cols = ws.max_column if ws.max_column else 20
+        row1_vals = [ws.cell(row=1, column=col).value for col in range(1, max_cols + 1)]
+        row2_vals = [ws.cell(row=2, column=col).value for col in range(1, max_cols + 1)]
+        wb.close()
+        
+        # Clean trailing blank buffer cells
+        while row1_vals and row1_vals[-1] is None and row2_vals[-1] is None:
+            row1_vals.pop()
+            row2_vals.pop()
+            
+        structure = []
+        current_parent = None
+        current_children = []
+        
+        for r1, r2 in zip(row1_vals, row2_vals):
+            if r1 is not None:
+                if current_parent is not None:
+                    structure.append((current_parent, current_children))
+                current_parent = r1
+                current_children = [r2] if r2 is not None else []
+            else:
+                if r2 is not None:
+                    current_children.append(r2)
+                    
+        if current_parent is not None:
+            structure.append((current_parent, current_children))
+            
+        return structure
+    except Exception as e:
+        print(f"   [!] Critical File Read Failure {os.path.basename(filepath)}: {e}")
+        return None
+
+def diagnose_structural_differences(template_struct, target_struct):
+    """
+    Compares two structures and pinpoints exact anomalies.
+    Returns a list of descriptive error strings. If list is empty, file is perfect.
+    """
+    anomalies = []
+    
+    # Map structures out into dictionaries for key lookup {Group_Header: [Sub_Headers]}
+    template_map = {group: subheaders for group, subheaders in template_struct}
+    target_map = {group: subheaders for group, subheaders in target_struct}
+    
+    # 1. Verify Parent Structural Banners Exist
+    for group in template_map:
+        if group not in target_map:
+            anomalies.append(f"Missing entire Section Group: '{group}'")
+            
+    for group in target_map:
+        if group not in template_map:
+            anomalies.append(f"Unexpected / Unrecognized Section Group detected: '{group}'")
+            
+    # 2. Inspect inner Subheaders for matched Sections
+    for group in template_map:
+        if group in target_map:
+            t_cols = template_map[group]
+            tgt_cols = target_map[group]
+            
+            # If sub-arrays don't match, run differential analysis
+            if t_cols != tgt_cols:
+                missing_cols = [col for col in t_cols if col not in tgt_cols]
+                extra_cols = [col for col in tgt_cols if col not in t_cols]
+                
+                if missing_cols:
+                    anomalies.append(f"In '{group}' group -> Missing expected column(s): {missing_cols}")
+                if extra_cols:
+                    anomalies.append(f"In '{group}' group -> Extra/Unknown column detected: {extra_cols}")
+                
+                # Typo Checker: If column count is identical but strings differ, trace position typos
+                if len(t_cols) == len(tgt_cols):
+                    for idx, (t_col, tgt_col) in enumerate(zip(t_cols, tgt_cols)):
+                        if t_col != tgt_col:
+                            anomalies.append(
+                                f"In '{group}' group -> Column Name Typo or swap detected! "
+                                f"Expected '{t_col}' but found '{tgt_col}' at position {idx+1} of the group"
+                            )
+                            
+    return anomalies
+
+def run_verification(template_path, target_folder):
+    """Runs data pipeline validation with granular anomaly debugging prints."""
+    print("\n" + "="*80)
+    print("                      HEADER QC DEEP DIAGNOSTIC REPORT")
+    print("="*80)
+    
+    template_struct = get_header_structure(template_path)
+    if not template_struct:
+        print("[CRITICAL] Could not read template file structural blueprint.")
+        return
+        
+    print(f"BENCHMARK TEMPLATE : {os.path.basename(template_path)}")
+    print(f"AUDIT TARGET FOLDER: {target_folder}\n")
+    print("-"*80)
+    
+    excel_files = [f for f in os.listdir(target_folder) if f.endswith(('.xlsx', '.xls'))]
+    if not excel_files:
+        print("[-] Verification halted: No valid Excel sheets found inside target backup folder.")
+        return
+
+    pass_count = 0
+    fail_count = 0
+
+    for file in sorted(excel_files):
+        file_path = os.path.join(target_folder, file)
+        target_struct = get_header_structure(file_path)
+        
+        if target_struct is None:
+            fail_count += 1
+            continue
+            
+        # Extract explicit descriptions of what broke
+        errors = diagnose_structural_differences(template_struct, target_struct)
+        
+        if not errors:
+            print(f"[PASS] ✔ {file}")
+            pass_count += 1
+        else:
+            print(f"[FAIL] ❌ {file}")
+            for err in errors:
+                print(f"       ↳ ANOMALY: {err}")
+            fail_count += 1
+            print("-"*60) # Visual break between multiple broken sheets
+
+    print("\n" + "="*80)
+    print(f" AUDIT COMPLETE SUMMARY | Total Files: {len(excel_files)} | Passed: {pass_count} | Failed: {fail_count}")
+    print("="*80)
+
+def select_paths_and_analyze():
+    root = tk.Tk()
+    root.withdraw() # Hide root framework
+    
+    messagebox.showinfo("Step 1: Template Selection", "Select your clean Baseline Template Excel file.")
+    template_file = filedialog.askopenfilename(
+        title="Select Benchmark Template File",
+        filetypes=[("Excel Files", "*.xlsx *.xls")]
+    )
+    if not template_file:
+        print("[CANCELLED] Evaluation aborted by user.")
+        return
+        
+    messagebox.showinfo("Step 2: Folder Audit Target", "Select the 'QC Sheet Backup' directory containing batch files.")
+    target_dir = filedialog.askdirectory(title="Select Folder to Audit")
+    if not target_dir:
+        print("[CANCELLED] Evaluation aborted by user.")
+        return
+        
+    run_verification(template_file, target_dir)
+    messagebox.showinfo("Finished", "Granular structural check completed! View terminal for details.")
+
+if __name__ == "__main__":
+    select_paths_and_analyze()

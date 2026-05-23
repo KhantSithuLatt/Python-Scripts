@@ -1,0 +1,114 @@
+import os
+import openpyxl
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+def get_header_structure(filepath):
+    """
+    Extracts a nested list structure representing Row 1 and Row 2 headers.
+    Returns: [ (Row1_Cell_Value, [Row2_Cell_Values...]), ... ]
+    """
+    try:
+        wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+        ws = wb.active
+        
+        # Read max columns dynamically based on row contents
+        max_cols = ws.max_column if ws.max_column else 20
+        
+        # Capture Row 1 and Row 2 raw values
+        row1_vals = [ws.cell(row=1, column=col).value for col in range(1, max_cols + 1)]
+        row2_vals = [ws.cell(row=2, column=col).value for col in range(1, max_cols + 1)]
+        wb.close()
+        
+        # Clean trailing None columns to prevent false mismatches
+        while row1_vals and row1_vals[-1] is None and row2_vals[-1] is None:
+            row1_vals.pop()
+            row2_vals.pop()
+            
+        structure = []
+        current_parent = None
+        current_children = []
+        
+        for r1, r2 in zip(row1_vals, row2_vals):
+            # If Row 1 has a value (it's either a single column header or start of a merged block)
+            if r1 is not None:
+                if current_parent is not None:
+                    structure.append((current_parent, current_children))
+                current_parent = r1
+                current_children = [r2] if r2 is not None else []
+            else:
+                # Merged block continuation
+                if r2 is not None:
+                    current_children.append(r2)
+                    
+        if current_parent is not None:
+            structure.append((current_parent, current_children))
+            
+        return structure
+    except Exception as e:
+        print(f"Error reading {os.path.basename(filepath)}: {e}")
+        return None
+
+def run_verification(template_path, target_folder):
+    """Compares target folder spreadsheets against the baseline template."""
+    print("\n" + "="*60)
+    print(" STARTING HEADER QC VERIFICATION REPORT")
+    print("="*60)
+    
+    # Load perfect structural map
+    template_struct = get_header_structure(template_path)
+    if not template_struct:
+        print("[ERROR] Failed to parse the benchmark Template structure.")
+        return
+        
+    print(f"Benchmark Template: {os.path.basename(template_path)}")
+    print(f"Target Directory: {target_folder}\n")
+    
+    # Locate files inside selected folder
+    excel_files = [f for f in os.listdir(target_folder) if f.endswith(('.xlsx', '.xls'))]
+    
+    if not excel_files:
+        print("[-] No Excel files found inside the chosen folder.")
+        return
+
+    # Process files
+    for file in sorted(excel_files):
+        file_path = os.path.join(target_folder, file)
+        current_struct = get_header_structure(file_path)
+        
+        if current_struct == template_struct:
+            print(f"[PASS] {file} matches perfectly.")
+        else:
+            print(f"[FAIL] {file} structural anomaly detected!")
+            # We will expand specific drill-down details (typos, counts) in the fine-tuning stage
+
+def select_paths_and_analyze():
+    # Hide the main root window framework
+    root = tk.Tk()
+    root.withdraw()
+    
+    # 1. Prompt for Template File Selection
+    messagebox.showinfo("Step 1", "Please select your perfect/correct Benchmark Template Excel file.")
+    template_file = filedialog.askopenfilename(
+        title="Select Benchmark Template File",
+        filetypes=[("Excel Files", "*.xlsx *.xls")]
+    )
+    
+    if not template_file:
+        print("[CANCELLED] No template selected.")
+        return
+        
+    # 2. Prompt for Target Folder Selection
+    messagebox.showinfo("Step 2", "Please select the folder containing the files you want to audit (QC Sheet Backup).")
+    target_dir = filedialog.askdirectory(title="Select Folder to Audit")
+    
+    if not target_dir:
+        print("[CANCELLED] No folder directory selected.")
+        return
+        
+    # Run the validation pipeline
+    run_verification(template_file, target_dir)
+    messagebox.showinfo("Complete", "Header check complete! Please check your terminal for results.")
+
+if __name__ == "__main__":
+    select_paths_and_analyze()
